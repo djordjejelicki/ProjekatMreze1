@@ -52,7 +52,7 @@ namespace PacketProject.Client
         // === TCP: petlja slanja, očekuj echo ===
         static void RunTcp(string ip, int port)
         {
-            Socket c = null;
+            Socket ?c = null;
             try
             {
                 c = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
@@ -62,7 +62,7 @@ namespace PacketProject.Client
                 while (true)
                 {
                     Console.Write("Poruka (ENTER za kraj): ");
-                    string msg = Console.ReadLine();
+                    string ?msg = Console.ReadLine();
                     if (string.IsNullOrEmpty(msg)) break;
 
                     byte[] data = Encoding.UTF8.GetBytes(msg);
@@ -84,7 +84,7 @@ namespace PacketProject.Client
         // === UDP: šalji na server, čitaj echo, petlja ===
         static void RunUdp(string ip, int port)
         {
-            Socket udp = null;
+            Socket ?udp = null;
             try
             {
                 udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -93,7 +93,7 @@ namespace PacketProject.Client
                 while (true)
                 {
                     Console.Write("Poruka (ENTER za kraj): ");
-                    string msg = Console.ReadLine();
+                    string ?msg = Console.ReadLine();
                     if (string.IsNullOrEmpty(msg)) break;
 
                     byte[] data = Encoding.UTF8.GetBytes(msg);

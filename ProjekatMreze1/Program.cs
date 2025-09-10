@@ -38,7 +38,7 @@ namespace PacketProject.Server
                 Console.Write("IP (Enter za " + def + "): ");
                 var s = Console.ReadLine();
                 if (string.IsNullOrWhiteSpace(s)) s = def;
-                IPAddress ip; if (IPAddress.TryParse(s, out ip)) return ip;
+                IPAddress ?ip; if (IPAddress.TryParse(s, out ip)) return ip;
                 Console.WriteLine("Nevažeća IP.");
             }
         }
@@ -57,8 +57,8 @@ namespace PacketProject.Server
         // === TCP: prihvati jednog klijenta, echo petlja ===
         static void RunTcp(IPAddress ip, int port)
         {
-            TcpListener listener = null;
-            Socket sock = null;
+            TcpListener ?listener = null;
+            Socket ?sock = null;
             try
             {
                 listener = new TcpListener(new IPEndPoint(ip, port));
@@ -66,8 +66,8 @@ namespace PacketProject.Server
                 Console.WriteLine("[TCP] Slušam na {0}:{1}", ip, port);
                 sock = listener.AcceptSocket();
                 Console.WriteLine("Prihvaćena konekcija: {0} -> {1}",
-                    (sock.RemoteEndPoint as IPEndPoint).ToString(),
-                    (sock.LocalEndPoint as IPEndPoint).ToString());
+                    (sock.RemoteEndPoint as IPEndPoint)?.ToString(),
+                    (sock.LocalEndPoint as IPEndPoint)?.ToString());
 
                 var buf = new byte[4096];
                 while (true)
@@ -93,7 +93,7 @@ namespace PacketProject.Server
         // === UDP: receive-from + echo nazad pošiljaocu ===
         static void RunUdp(IPAddress ip, int port)
         {
-            Socket udp = null;
+            Socket ?udp = null;
             try
             {
                 udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
