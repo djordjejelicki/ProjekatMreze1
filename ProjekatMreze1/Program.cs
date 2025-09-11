@@ -57,36 +57,63 @@ namespace PacketProject.Server
         // === TCP: prihvati jednog klijenta, echo petlja ===
         static void RunTcp(IPAddress ip, int port)
         {
-            TcpListener ?listener = null;
-            Socket ?sock = null;
+            Socket ?listener = null;
+            var clients = new List<Socket>();
+
             try
             {
-                listener = new TcpListener(new IPEndPoint(ip, port));
-                listener.Start();
+                listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                listener.Bind(new IPEndPoint(ip, port));
+                listener.Listen(10);  // backlog
                 Console.WriteLine("[TCP] Slušam na {0}:{1}", ip, port);
-                sock = listener.AcceptSocket();
-                Console.WriteLine("Prihvaćena konekcija: {0} -> {1}",
-                    (sock.RemoteEndPoint as IPEndPoint)?.ToString(),
-                    (sock.LocalEndPoint as IPEndPoint)?.ToString());
 
-                var buf = new byte[4096];
                 while (true)
                 {
-                    int n = sock.Receive(buf);
-                    if (n == 0) { Console.WriteLine("Klijent zatvorio vezu."); break; }
-                    string msg = Encoding.UTF8.GetString(buf, 0, n);
-                    Console.WriteLine("Primljeno: \"{0}\" ({1} B)", msg, n);
+                    // Poll listener za nove konekcije (neblokirajuće)
+                    if (listener.Poll(1000, SelectMode.SelectRead))
+                    {
+                        var client = listener.Accept();
+                        Console.WriteLine("Novi klijent: {0}", client.RemoteEndPoint);
+                        clients.Add(client);
+                    }
 
-                    string reply = "Echo: " + msg;
-                    byte[] outBuf = Encoding.UTF8.GetBytes(reply);
-                    sock.Send(outBuf);
+                    // Poll postojeće klijente
+                    for (int i = clients.Count - 1; i >= 0; i--)
+                    {
+                        var c = clients[i];
+                        if (c.Poll(1000, SelectMode.SelectRead))
+                        {
+                            var buf = new byte[4096];
+                            int n = c.Receive(buf);
+                            if (n == 0)
+                            {
+                                Console.WriteLine("Klijent {0} je zatvorio vezu.", c.RemoteEndPoint);
+                                c.Close();
+                                clients.RemoveAt(i);
+                                continue;
+                            }
+
+                            string msg = Encoding.UTF8.GetString(buf, 0, n);
+                            Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", c.RemoteEndPoint, msg, n);
+
+                            // Echo nazad
+                            byte[] outBuf = Encoding.UTF8.GetBytes("Echo: " + msg);
+                            c.Send(outBuf);
+                        }
+                    }
+
+                    // Mala pauza da CPU ne gori
+                    System.Threading.Thread.Sleep(10);
                 }
             }
-            catch (SocketException ex) { Console.WriteLine("TCP greška: " + ex.Message); }
+            catch (SocketException ex)
+            {
+                Console.WriteLine("TCP greška: " + ex.Message);
+            }
             finally
             {
-                try { if (sock != null) { sock.Shutdown(SocketShutdown.Both); sock.Close(); } } catch { }
-                if (listener != null) listener.Stop();
+                foreach (var c in clients) c.Close();
+                listener?.Close();
             }
         }
 
@@ -94,6 +121,8 @@ namespace PacketProject.Server
         static void RunUdp(IPAddress ip, int port)
         {
             Socket ?udp = null;
+            var clients = new List<EndPoint>(); // lista poznatih pošiljalaca
+
             try
             {
                 udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
@@ -101,21 +130,38 @@ namespace PacketProject.Server
                 Console.WriteLine("[UDP] Slušam na {0}:{1}", ip, port);
 
                 var buf = new byte[4096];
-                EndPoint sender = new IPEndPoint(IPAddress.Any, 0);
 
                 while (true)
                 {
-                    int n = udp.ReceiveFrom(buf, ref sender);
-                    string msg = Encoding.UTF8.GetString(buf, 0, n);
-                    Console.WriteLine("Primljeno od {0}: \"{1}\"", sender, msg);
+                    // Poll UDP soket za spremne podatke
+                    if (udp.Poll(1000, SelectMode.SelectRead))
+                    {
+                        EndPoint sender = new IPEndPoint(IPAddress.Any, 0);
+                        int n = udp.ReceiveFrom(buf, ref sender);
 
-                    string reply = "Echo: " + msg;
-                    byte[] outBuf = Encoding.UTF8.GetBytes(reply);
-                    udp.SendTo(outBuf, sender);
+                        string msg = Encoding.UTF8.GetString(buf, 0, n);
+                        Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", sender, msg, n);
+
+                        // Ako je novi klijent, dodaj u listu
+                        if (!clients.Contains(sender)) clients.Add(sender);
+
+                        // Echo nazad
+                        byte[] outBuf = Encoding.UTF8.GetBytes("Echo: " + msg);
+                        udp.SendTo(outBuf, sender);
+                    }
+
+                    // Mala pauza da CPU ne gori
+                    System.Threading.Thread.Sleep(10);
                 }
             }
-            catch (SocketException ex) { Console.WriteLine("UDP greška: " + ex.Message); }
-            finally { if (udp != null) udp.Close(); }
+            catch (SocketException ex)
+            {
+                Console.WriteLine("UDP greška: " + ex.Message);
+            }
+            finally
+            {
+                udp?.Close();
+            }
         }
     }
 }
