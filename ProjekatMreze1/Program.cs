@@ -1,4 +1,5 @@
-﻿using System.Net;
+﻿using System.Collections.Concurrent;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 
@@ -9,6 +10,8 @@ namespace PacketProject.Server
 
     class Program
     {
+        static readonly object consoleLock = new object();
+
         static void Main()
         {
             Console.Title = "Server";
@@ -59,13 +62,41 @@ namespace PacketProject.Server
         {
             Socket ?listener = null;
             var clients = new List<Socket>();
+            var messages = new ConcurrentQueue<(Socket client, string msg)>();
 
             try
             {
                 listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 listener.Bind(new IPEndPoint(ip, port));
                 listener.Listen(10);  // backlog
-                Console.WriteLine("[TCP] Slušam na {0}:{1}", ip, port);
+                lock (consoleLock)
+                {
+                    Console.WriteLine("[TCP] Slušam na {0}:{1}", ip, port);
+                }
+
+                // Task za unos sa konzole
+                Task.Run(() =>
+                {
+                    while (true)
+                    {
+                        if (messages.TryDequeue(out var item))
+                        {
+                            string ?odgovor;
+                            lock (consoleLock)
+                            {
+                                Console.Write($"Odgovor za klijenta {item.client.RemoteEndPoint}: ");
+                                odgovor = Console.ReadLine();
+                            }
+                            byte[] outBuf = Encoding.UTF8.GetBytes(odgovor ?? "");
+                            try
+                            {
+                                item.client.Send(outBuf);
+                            }
+                            catch { /* klijent možda zatvorio vezu */ }
+                        }
+                        System.Threading.Thread.Sleep(10);
+                    }
+                });
 
                 while (true)
                 {
@@ -73,7 +104,10 @@ namespace PacketProject.Server
                     if (listener.Poll(1000, SelectMode.SelectRead))
                     {
                         var client = listener.Accept();
-                        Console.WriteLine("Novi klijent: {0}", client.RemoteEndPoint);
+                        lock (consoleLock)
+                        {
+                            Console.WriteLine("Novi klijent: {0}", client.RemoteEndPoint);
+                        }
                         clients.Add(client);
                     }
 
@@ -87,18 +121,21 @@ namespace PacketProject.Server
                             int n = c.Receive(buf);
                             if (n == 0)
                             {
-                                Console.WriteLine("Klijent {0} je zatvorio vezu.", c.RemoteEndPoint);
+                                lock (consoleLock)
+                                {
+                                    Console.WriteLine("Klijent {0} je zatvorio vezu.", c.RemoteEndPoint);
+                                }
                                 c.Close();
                                 clients.RemoveAt(i);
                                 continue;
                             }
 
                             string msg = Encoding.UTF8.GetString(buf, 0, n);
-                            Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", c.RemoteEndPoint, msg, n);
-
-                            // Echo nazad
-                            byte[] outBuf = Encoding.UTF8.GetBytes("Echo: " + msg);
-                            c.Send(outBuf);
+                            lock (consoleLock)
+                            {
+                                Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", c.RemoteEndPoint, msg, n);
+                            }
+                            messages.Enqueue((c, msg));
                         }
                     }
 
@@ -108,7 +145,10 @@ namespace PacketProject.Server
             }
             catch (SocketException ex)
             {
-                Console.WriteLine("TCP greška: " + ex.Message);
+                lock (consoleLock)
+                {
+                    Console.WriteLine("TCP greška: " + ex.Message);
+                }
             }
             finally
             {
@@ -122,12 +162,41 @@ namespace PacketProject.Server
         {
             Socket ?udp = null;
             var clients = new List<EndPoint>(); // lista poznatih pošiljalaca
+            var messages = new ConcurrentQueue<(EndPoint sender, string msg)>();
 
             try
             {
                 udp = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
                 udp.Bind(new IPEndPoint(ip, port));
-                Console.WriteLine("[UDP] Slušam na {0}:{1}", ip, port);
+
+                lock (consoleLock)
+                {
+                    Console.WriteLine("[UDP] Slušam na {0}:{1}", ip, port);
+                }
+
+                Task.Run(() =>
+                {
+                    while (true)
+                    {
+                        if (messages.TryDequeue(out var item))
+                        {
+                            string ?odgovor;
+                            lock (consoleLock) // <<< DODATO
+                            {
+                                Console.Write($"Odgovor za klijenta {item.sender}: ");
+                                odgovor = Console.ReadLine();
+                            }
+
+                            byte[] outBuf = Encoding.UTF8.GetBytes(odgovor ?? "");
+                            try
+                            {
+                                udp.SendTo(outBuf, item.sender);
+                            }
+                            catch { /* klijent možda zatvorio vezu */ }
+                        }
+                        System.Threading.Thread.Sleep(10);
+                    }
+                });
 
                 var buf = new byte[4096];
 
@@ -140,14 +209,15 @@ namespace PacketProject.Server
                         int n = udp.ReceiveFrom(buf, ref sender);
 
                         string msg = Encoding.UTF8.GetString(buf, 0, n);
-                        Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", sender, msg, n);
+                        lock (consoleLock)
+                        {
+                            Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", sender, msg, n);
+                        }
+
+                        messages.Enqueue((sender, msg));
 
                         // Ako je novi klijent, dodaj u listu
                         if (!clients.Contains(sender)) clients.Add(sender);
-
-                        // Echo nazad
-                        byte[] outBuf = Encoding.UTF8.GetBytes("Echo: " + msg);
-                        udp.SendTo(outBuf, sender);
                     }
 
                     // Mala pauza da CPU ne gori
@@ -156,7 +226,11 @@ namespace PacketProject.Server
             }
             catch (SocketException ex)
             {
-                Console.WriteLine("UDP greška: " + ex.Message);
+                lock (consoleLock)
+                {
+                    Console.WriteLine("UDP greška: " + ex.Message);
+                }
+
             }
             finally
             {
