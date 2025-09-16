@@ -57,12 +57,14 @@ namespace PacketProject.Server
             }
         }
 
-        // === TCP: prihvati jednog klijenta, echo petlja ===
+        // === TCP ===
         static void RunTcp(IPAddress ip, int port)
         {
-            Socket ?listener = null;
+            Socket? listener = null;
             var clients = new List<Socket>();
             var messages = new ConcurrentQueue<(Socket client, string msg)>();
+
+            var liveClients = new ConcurrentDictionary<Socket, bool>(); 
 
             try
             {
@@ -74,27 +76,38 @@ namespace PacketProject.Server
                     Console.WriteLine("[TCP] Slušam na {0}:{1}", ip, port);
                 }
 
-                // Task za unos sa konzole
+                // Task za slanje odgovora
                 Task.Run(() =>
                 {
                     while (true)
                     {
                         if (messages.TryDequeue(out var item))
                         {
-                            string ?odgovor;
+                            string? odgovor;
                             lock (consoleLock)
                             {
                                 Console.Write($"Odgovor za klijenta {item.client.RemoteEndPoint}: ");
                                 odgovor = Console.ReadLine();
                             }
                             byte[] outBuf = Encoding.UTF8.GetBytes(odgovor ?? "");
-                            try
+
+                            // šalji samo ako je klijent živ
+                            if (liveClients.ContainsKey(item.client))
                             {
-                                item.client.Send(outBuf);
+                                try
+                                {
+                                    item.client.Send(outBuf);
+                                }
+                                catch (Exception ex)
+                                {
+                                    lock (consoleLock)
+                                    {
+                                        Console.WriteLine($"[GREŠKA] Slanje poruke klijentu nije uspelo: {ex.Message}");
+                                    }
+                                }
                             }
-                            catch { /* klijent možda zatvorio vezu */ }
                         }
-                        System.Threading.Thread.Sleep(10);
+                        Thread.Sleep(10);
                     }
                 });
 
@@ -103,44 +116,68 @@ namespace PacketProject.Server
                     // Poll listener za nove konekcije (neblokirajuće)
                     if (listener.Poll(1000, SelectMode.SelectRead))
                     {
-                        var client = listener.Accept();
-                        lock (consoleLock)
+                        try
                         {
-                            Console.WriteLine("Novi klijent: {0}", client.RemoteEndPoint);
+                            var client = listener.Accept();
+                            lock (consoleLock)
+                            {
+                                Console.WriteLine("Novi klijent: {0}", client.RemoteEndPoint);
+                            }
+                            clients.Add(client);
+                            liveClients[client] = true; 
                         }
-                        clients.Add(client);
+                        catch (SocketException ex)
+                        {
+                            lock (consoleLock)
+                            {
+                                Console.WriteLine($"[GREŠKA] Problem pri prihvatanju klijenta: {ex.Message}");
+                            }
+                        }
                     }
 
                     // Poll postojeće klijente
                     for (int i = clients.Count - 1; i >= 0; i--)
                     {
                         var c = clients[i];
-                        if (c.Poll(1000, SelectMode.SelectRead))
+                        try
                         {
-                            var buf = new byte[4096];
-                            int n = c.Receive(buf);
-                            if (n == 0)
+                            if (c.Poll(1000, SelectMode.SelectRead))
                             {
+                                var buf = new byte[4096];
+                                int n = c.Receive(buf);
+                                if (n == 0)
+                                {
+                                    lock (consoleLock)
+                                    {
+                                        Console.WriteLine("Klijent {0} je zatvorio vezu.", c.RemoteEndPoint);
+                                    }
+                                    liveClients.TryRemove(c, out _); 
+                                    c.Close();
+                                    clients.RemoveAt(i);
+                                    continue;
+                                }
+
+                                string msg = Encoding.UTF8.GetString(buf, 0, n);
                                 lock (consoleLock)
                                 {
-                                    Console.WriteLine("Klijent {0} je zatvorio vezu.", c.RemoteEndPoint);
+                                    Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", c.RemoteEndPoint, msg, n);
                                 }
-                                c.Close();
-                                clients.RemoveAt(i);
-                                continue;
+                                messages.Enqueue((c, msg));
                             }
-
-                            string msg = Encoding.UTF8.GetString(buf, 0, n);
+                        }
+                        catch (Exception ex)
+                        {
                             lock (consoleLock)
                             {
-                                Console.WriteLine("Primljeno od {0}: \"{1}\" ({2} B)", c.RemoteEndPoint, msg, n);
+                                Console.WriteLine($"[GREŠKA] Problem sa klijentom {c.RemoteEndPoint}: {ex.Message}");
                             }
-                            messages.Enqueue((c, msg));
+                            liveClients.TryRemove(c, out _); 
+                            c.Close();
+                            clients.RemoveAt(i);
                         }
                     }
 
-                    // Mala pauza da CPU ne gori
-                    System.Threading.Thread.Sleep(10);
+                    Thread.Sleep(10);
                 }
             }
             catch (SocketException ex)
@@ -157,10 +194,10 @@ namespace PacketProject.Server
             }
         }
 
-        // === UDP: receive-from + echo nazad pošiljaocu ===
+        // === UDP ===
         static void RunUdp(IPAddress ip, int port)
         {
-            Socket ?udp = null;
+            Socket? udp = null;
             var clients = new List<EndPoint>(); // lista poznatih pošiljalaca
             var messages = new ConcurrentQueue<(EndPoint sender, string msg)>();
 
@@ -174,27 +211,36 @@ namespace PacketProject.Server
                     Console.WriteLine("[UDP] Slušam na {0}:{1}", ip, port);
                 }
 
+                // Task za slanje odgovora
                 Task.Run(() =>
                 {
                     while (true)
                     {
                         if (messages.TryDequeue(out var item))
                         {
-                            string ?odgovor;
-                            lock (consoleLock) // <<< DODATO
+                            string? odgovor;
+                            lock (consoleLock)
                             {
                                 Console.Write($"Odgovor za klijenta {item.sender}: ");
                                 odgovor = Console.ReadLine();
                             }
 
                             byte[] outBuf = Encoding.UTF8.GetBytes(odgovor ?? "");
+
+                            // šalji paket
                             try
                             {
                                 udp.SendTo(outBuf, item.sender);
                             }
-                            catch { /* klijent možda zatvorio vezu */ }
+                            catch (Exception ex)
+                            {
+                                lock (consoleLock)
+                                {
+                                    Console.WriteLine($"[GREŠKA] Slanje poruke klijentu {item.sender} nije uspelo: {ex.Message}");
+                                }
+                            }
                         }
-                        System.Threading.Thread.Sleep(10);
+                        Thread.Sleep(10);
                     }
                 });
 
@@ -202,11 +248,23 @@ namespace PacketProject.Server
 
                 while (true)
                 {
-                    // Poll UDP soket za spremne podatke
                     if (udp.Poll(1000, SelectMode.SelectRead))
                     {
                         EndPoint sender = new IPEndPoint(IPAddress.Any, 0);
-                        int n = udp.ReceiveFrom(buf, ref sender);
+                        int n = 0;
+
+                        try
+                        {
+                            n = udp.ReceiveFrom(buf, ref sender);
+                        }
+                        catch (SocketException ex)
+                        {
+                            lock (consoleLock)
+                            {
+                                Console.WriteLine($"[GREŠKA] Problem pri prijemu: {ex.Message}");
+                            }
+                            continue;
+                        }
 
                         string msg = Encoding.UTF8.GetString(buf, 0, n);
                         lock (consoleLock)
@@ -216,12 +274,14 @@ namespace PacketProject.Server
 
                         messages.Enqueue((sender, msg));
 
-                        // Ako je novi klijent, dodaj u listu
-                        if (!clients.Contains(sender)) clients.Add(sender);
+                        // ako je novi klijent, dodaj u listu
+                        if (!clients.Contains(sender))
+                        {
+                            clients.Add(sender);
+                        }
                     }
 
-                    // Mala pauza da CPU ne gori
-                    System.Threading.Thread.Sleep(10);
+                    Thread.Sleep(10);
                 }
             }
             catch (SocketException ex)
@@ -230,7 +290,6 @@ namespace PacketProject.Server
                 {
                     Console.WriteLine("UDP greška: " + ex.Message);
                 }
-
             }
             finally
             {

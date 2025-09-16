@@ -7,10 +7,7 @@ namespace PacketProject.Sniffer
 {
     class Program
     {
-        // =========================
-        // ZADATAK 9 — STATISTIKA
-        // Globalni akumulatori za praćenje najvećeg payload-a i ukupnog payload-a
-        // =========================
+     
         static long totalPayloadBytes = 0;           // zbir dužina svih aplikativnih delova (payload) koje smo presreli
         static int packetOrdinal = 0;                // redni broj paketa (od starta sniffera)
 
@@ -24,7 +21,7 @@ namespace PacketProject.Sniffer
         {
             Console.Title = "Packet Sniffer";
 
-            // 1) Lista mrežnih interfejsa
+            //Lista mrežnih interfejsa
             var devices = CaptureDeviceList.Instance;
             if (devices == null || devices.Count < 1)
             {
@@ -48,7 +45,7 @@ namespace PacketProject.Sniffer
 
             var device = devices[choice];
 
-            // 2) Otvaranje uređaja (SharpPcap v6+: DeviceConfiguration + DeviceModes)
+            //Otvaranje uređaja (SharpPcap v6+: DeviceConfiguration + DeviceModes)
             int readTimeoutMs = 1000;
             var config = new DeviceConfiguration
             {
@@ -66,7 +63,7 @@ namespace PacketProject.Sniffer
                 return;
             }
 
-            // 3) BPF filter (opciono): npr. "tcp or udp", "port 15001", "tcp and port 15001"
+            // BPF filter (opciono): npr. "tcp or udp", "port 15001", "tcp and port 15001"
             Console.Write("Unesi filter (Enter za sve): ");
             string filter = Console.ReadLine();
             if (!string.IsNullOrWhiteSpace(filter))
@@ -83,16 +80,16 @@ namespace PacketProject.Sniffer
 
             Console.WriteLine("Sniffer pokrenut. Pritisni ENTER za prekid...");
 
-            // 4) Pretplata i start
+            // Pretplata i start
             device.OnPacketArrival += OnPacketArrival;   // v6+ koristi PacketCapture u handleru
             device.StartCapture();
 
             Console.ReadLine();
 
-            // 5) Stop, ispiši statistiku, pa close
+            //  Stop, ispiši statistiku, pa close
             try { device.StopCapture(); } catch { }
 
-            // >>> ZADATAK 9 — Ispis statistike pri gašenju sniffera <<<
+            
             PrintStatistics();
 
             Console.WriteLine("Pritisni ENTER da zatvoriš sniffer...");
@@ -101,11 +98,11 @@ namespace PacketProject.Sniffer
             try { device.Close(); } catch { }
         }
 
-        // Izdvojena funkcija da bi ispis bio uredan i jasno odvojen
+        
         private static void PrintStatistics()
         {
             Console.WriteLine();
-            Console.WriteLine("=== STATISTIKA (Zadatak 9) ===");
+            Console.WriteLine("=== STATISTIKA ===");
 
             if (maxPayloadBytes >= 0 && totalPayloadBytes > 0)
             {
@@ -129,7 +126,7 @@ namespace PacketProject.Sniffer
         private static void OnPacketArrival(object sender, PacketCapture e)
         {
             var raw = e.GetPacket();
-            var time = raw.Timeval.Date;             // vreme hvatanja ovog paketa (koristimo ga i za statistiku)
+            var time = raw.Timeval.Date;             // vreme hvatanja ovog paketa 
             int len = raw.Data.Length;
 
             var packet = Packet.ParsePacket(raw.LinkLayerType, raw.Data);
@@ -199,17 +196,15 @@ namespace PacketProject.Sniffer
                 Console.WriteLine($"Payload ({payloadLen} bytes): {payloadAscii}");
             Console.WriteLine(new string('-', 60));
 
-            // =========================
-            // ZADATAK 9 — AŽURIRANJE STATISTIKE
-            // =========================
+         
 
-            // 1) Uvećaj redni broj paketa
+            //  Uvećaj redni broj paketa
             packetOrdinal++;
 
-            // 2) Saberi ukupni payload preko svih paketa
+            //  Saberi ukupni payload preko svih paketa
             totalPayloadBytes += payloadLen;
 
-            // 3) Ako je ovo najveći payload do sada, zapamti sve tražene podatke
+            //  Ako je ovo najveći payload do sada, zapamti sve tražene podatke
             if (payloadLen > maxPayloadBytes)
             {
                 maxPayloadBytes = payloadLen;
